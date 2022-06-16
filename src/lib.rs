@@ -27,6 +27,7 @@ pub struct Bundler<'a> {
     _crate_name: &'a str,
     skip_use: HashSet<String>,
     minify_re: Option<Regex>,
+    skip_mod: HashSet<&'a str>,
 }
 
 /// Defines a regex to match a line of rust source.
@@ -47,16 +48,33 @@ fn source_line_regex<S: AsRef<str>>(source_regex: S) -> Regex {
 
 impl<'a> Bundler<'a> {
     pub fn new(binrs_filename: &'a Path, bundle_filename: &'a Path) -> Bundler<'a> {
+        Bundler::<'a>::new_with_librs(binrs_filename, bundle_filename, Path::new(LIBRS_FILENAME))
+    }
+
+    pub fn new_with_librs(
+        binrs_filename: &'a Path,
+        bundle_filename: &'a Path,
+        librs_filename: &'a Path,
+    ) -> Bundler<'a> {
+        let mut skip_use = HashSet::new();
+        skip_use.insert("*".to_string());
+        let mut skip_mod = HashSet::new();
+        skip_mod.insert("tests");
         Bundler {
             binrs_filename,
             bundle_filename,
-            librs_filename: Path::new(LIBRS_FILENAME),
+            librs_filename,
             comment_re: source_line_regex(r" "),
             warn_re: source_line_regex(r" #!\[warn\(.*"),
             _crate_name: "",
-            skip_use: HashSet::new(),
+            skip_use,
             minify_re: None,
+            skip_mod,
         }
+    }
+
+    pub fn exclude_mod(&mut self, mod_name: &'a str) {
+        self.skip_mod.insert(mod_name);
     }
 
     pub fn minify_set(&mut self, enable: bool) {
@@ -81,7 +99,6 @@ impl<'a> Bundler<'a> {
                 self.binrs_filename.display()
             )
         });
-        println!("rerun-if-changed={}", self.bundle_filename.display());
     }
 
     /// From the file that has the main() function, expand "extern
@@ -98,6 +115,8 @@ impl<'a> Bundler<'a> {
         let usecrate_re = source_line_regex(
             format!(r" use  {} :: (.*) ; ", String::from(self._crate_name)).as_str(),
         );
+
+        eprintln!("{:?}", usecrate_re);
 
         let mut line = String::new();
         while bin_reader.read_line(&mut line).unwrap() > 0 {
@@ -131,7 +150,7 @@ impl<'a> Bundler<'a> {
             if self.comment_re.is_match(&line) || self.warn_re.is_match(&line) {
             } else if let Some(cap) = mod_re.captures(&line) {
                 let modname = cap.name("m").unwrap().as_str();
-                if modname != "tests" {
+                if !self.skip_mod.contains(modname) {
                     self.usemod(o, modname, modname, modname)?;
                 }
             } else {
@@ -152,16 +171,15 @@ impl<'a> Bundler<'a> {
         mod_path: &str,
         mod_import: &str,
     ) -> Result<(), io::Error> {
+        let src_dir = self.librs_filename.parent().unwrap();
+
         let mod_filenames0 = vec![
-            format!("src/{}.rs", mod_path),
-            format!("src/{}/mod.rs", mod_path),
+            src_dir.join(mod_path.to_owned() + ".rs"),
+            src_dir.join(mod_path.to_owned()).join("mod.rs"),
         ];
         let mod_fd = mod_filenames0
             .iter()
-            .map(|fn0| {
-                let mod_filename = Path::new(&fn0);
-                File::open(mod_filename)
-            })
+            .map(|mod_filename| File::open(mod_filename))
             .find(|fd| fd.is_ok());
         assert!(mod_fd.is_some(), "could not find file for module");
         let mut mod_reader = BufReader::new(mod_fd.unwrap().unwrap());
