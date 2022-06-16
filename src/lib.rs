@@ -28,6 +28,7 @@ pub struct Bundler<'a> {
     skip_use: HashSet<String>,
     minify_re: Option<Regex>,
     skip_mod: HashSet<&'a str>,
+    strip_comments: bool,
 }
 
 /// Defines a regex to match a line of rust source.
@@ -70,6 +71,7 @@ impl<'a> Bundler<'a> {
             skip_use,
             minify_re: None,
             skip_mod,
+            strip_comments: true,
         }
     }
 
@@ -83,6 +85,10 @@ impl<'a> Bundler<'a> {
         } else {
             None
         };
+    }
+
+    pub fn strip_comments_set(&mut self, enable: bool) {
+        self.strip_comments = enable;
     }
 
     pub fn crate_name(&mut self, name: &'a str) {
@@ -121,7 +127,7 @@ impl<'a> Bundler<'a> {
         let mut line = String::new();
         while bin_reader.read_line(&mut line).unwrap() > 0 {
             line.truncate(line.trim_end().len());
-            if self.comment_re.is_match(&line) || self.warn_re.is_match(&line) {
+            if self.strip_comments && (self.comment_re.is_match(&line) || self.warn_re.is_match(&line)) {
             } else if extcrate_re.is_match(&line) {
                 self.librs(o)?;
             } else if let Some(cap) = usecrate_re.captures(&line) {
@@ -147,7 +153,7 @@ impl<'a> Bundler<'a> {
         let mut line = String::new();
         while lib_reader.read_line(&mut line).unwrap() > 0 {
             line.pop();
-            if self.comment_re.is_match(&line) || self.warn_re.is_match(&line) {
+            if self.strip_comments && (self.comment_re.is_match(&line) || self.warn_re.is_match(&line)) {
             } else if let Some(cap) = mod_re.captures(&line) {
                 let modname = cap.name("m").unwrap().as_str();
                 if !self.skip_mod.contains(modname) {
@@ -193,7 +199,7 @@ impl<'a> Bundler<'a> {
 
         while mod_reader.read_line(&mut line).unwrap() > 0 {
             line.truncate(line.trim_end().len());
-            if self.comment_re.is_match(&line) || self.warn_re.is_match(&line) {
+            if self.strip_comments && (self.comment_re.is_match(&line) || self.warn_re.is_match(&line)) {
             } else if let Some(cap) = mod_re.captures(&line) {
                 let submodname = cap.name("m").unwrap().as_str();
                 if submodname != "tests" {
